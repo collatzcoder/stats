@@ -1,0 +1,1120 @@
+--- A compilation and rework of the mmath file, incorporating optimized forms for statistics and newer math functions.
+--
+-- Credit goes to sans.9536 of the Minecraft Computer Mods discord for these functions and this file.
+--
+-- @module amath
+-- @author sans.9536
+
+local expect = require "cc.expect"
+local expect = expect.expect
+local F = {}
+
+--- Solves f(x) = g(x) over an interval by probing many starting points and using Newton-Raphson.
+--
+-- @tparam function f First function in the system (number -> number)
+-- @tparam function g Second function in the system (number -> number)
+-- @tparam number min Lower bound of the search interval
+-- @tparam number max Upper bound of the search interval
+-- @tparam number steps Number of probe seeds across the interval (integer >= 1)
+-- @tparam number[opt] tol Tolerance forwarded to the root finder (defaults to 1e-10)
+-- @tparam number[opt] closeThresh Distance threshold used to consider two roots identical
+-- @treturn table Array (list) of root approximations found within [min, max]
+-- @usage local roots = F.solveSysEq(math.sin, function(x) return 0 end, 0, 2 * math.pi, 100, 1e-8, 1e-6)
+function F.solveSysEq(f, g, min, max, steps, tol, closeThresh)
+    expect(1, f, "function")
+    expect(2, g, "function")
+    expect(3, min, "number")
+    expect(4, max, "number")
+    expect(5, steps, "number")
+    expect(6, tol, "number", "nil")
+    expect(7, closeThresh, "number", "nil")
+    if min >= max then
+        error("Minimum bound needs to be lesser than maximum bound!")
+    end
+    if steps < 1 then
+        error("Number of Steps must be greater than or equal to one!")
+    end
+
+    local function h(f,g) 
+        return function(x) return (f(x)-g(x)) end
+    end
+    local solutions = {}
+    for i = 0, steps do
+        local root = F.solveRoot(h(f,g), min + (max - min) * i / steps, tol)
+        
+        if root then
+            local duplicate = false
+            for _, sol in ipairs(solutions) do
+                if math.abs(sol - root) < close_thresh then
+                    duplicate = true
+                    break
+                end
+            end
+            if not duplicate and root >= min and root <= max then
+                table.insert(solutions, root)
+            end
+        else
+            local x = min + (max - min) * i / steps
+            for j = 1,100 do
+                if h(f,g)(x) < close_thresh then
+                    local duplicate = false
+                    for _, sol in ipairs(solutions) do
+                        if math.abs(sol - x) < close_thresh then
+                            duplicate = true
+                            break
+                        end
+                    end
+                    if not duplicate then
+                        table.insert(solutions, x)
+                    end
+                    break
+                else
+                    x = x + (max - min) / (steps * 100)
+                end
+            end
+        end
+    end
+    return solutions
+end
+
+--- Expand a set of values according to integer weights.
+--
+-- For each index i in `values`, `values[i]` is inserted into the returned
+-- table `weights[i]` times. Both `values` and `weights` are treated as
+-- array-like tables using matching indices.
+-- @tparam table values Array/table of values to repeat
+-- @tparam table weights Array/table of integer weights (same indexing as values)
+-- @treturn table New array-like table with values repeated according to weights
+-- @usage local expanded = F.weightedTable({"a","b"}, {3,1}) -- {"a","a","a","b"}
+function F.weightedTable(values, weights)
+    expect(1, values, "table")
+    expect(2, weights, "table")
+    if #values ~= #weights then
+        error("The values and weights tables must have the same number of values!")
+    end
+
+    local result = {}
+    for i,v in pairs(values) do
+        local b = 1
+        while weights[i] >= b do
+            table.insert(result,v)
+            b = b + 1
+        end
+    end
+    return result
+end
+
+--- Shuffle (randomize) an array-like table in-place and return it.
+--
+-- This function mutates the input table `t` by repeatedly removing each
+-- element and inserting it at a random position. It is a simple shuffle and
+-- not an in-place Fisher–Yates implementation.
+-- @tparam table t Array-like table to scramble (mutated)
+-- @treturn table The same table, now scrambled
+-- @usage F.scramble(myArray)
+function F.scramble(t)
+    expect(1, t, "table")
+
+    for index, value in pairs(t) do
+        local a = value
+        table.remove(t, index)
+        table.insert(t, math.random(1, #t + 1), a)
+    end
+    return t
+end
+
+--- Numerically integrate `f` on [a, b] using the trapezoid rule.
+---
+-- @tparam function f Function to integrate (callable: number -> number)
+-- @tparam number n Number of subdivisions (integer > 0)
+-- @tparam number a Lower bound
+-- @tparam number b Upper bound
+-- @tparam number[opt] init Optional initial accumulator (default 0)
+-- @treturn number Approximation of the integral of `f` on [a, b]
+-- @usage local I = F.integrateSimple(math.sin, 1000, 0, math.pi)
+function F.integrateS(f, n, a, b, init)
+    expect(1, f, "function")
+    expect(2, n, "number")
+    expect(3, a, "number")
+    expect(4, b, "number")
+    expect(5, init, "number", "nil")
+    if n <= 0 then
+        error("Number of Subdivisions must be greater than zero!")
+    end
+    if a >= b then
+        error("The lower bound must be less than the upper bound!")
+    end
+
+    local width = (b - a) / n
+    local sum = init or 0
+    for i = 0, n - 1 do
+        local x1 = a + i * width
+        local x2 = a + (i + 1) * width
+        sum = sum + (f(x1) + f(x2)) * width / 2
+    end
+    return sum
+    
+end
+
+--- Numerically integrate `f` on [a, b] using Simpson-like parabolic rule.
+--
+-- If `n` is odd it is decremented to make it even. This method is generally
+-- more accurate than the trapezoid rule for smooth functions.
+-- @tparam function f Function to integrate (callable: number -> number)
+-- @tparam number n Number of subdivisions (must be >= 2; adjusted to even if odd)
+-- @tparam number a Lower bound
+-- @tparam number b Upper bound
+-- @tparam number[opt] init Optional initial accumulator (default 0)
+-- @treturn number Simpson-style approximation of the integral
+-- @usage local I = F.integrateComplex(math.sin, 1000, 0, math.pi)
+function F.integrateC(f, n, a, b, init)
+    expect(1, f, "function")
+    expect(2, n, "number")
+    expect(3, a, "number")
+    expect(4, b, "number")
+    expect(5, init, "number", "nil")
+    if n <= 2 then
+        error("Number of Subdivisions must be greater than two!")
+    end
+    if a >= b then
+        error("The lower bound must be less than the upper bound!")
+    end
+
+    if n % 2 ~= 0 then
+        n = n - 1
+    end
+    local width = (b - a) / n
+    local sum = init or 0
+    for i = 0, n / 2 - 1 do
+        local x0 = a + i * 2 * width
+        local x1 = a + (i * 2 + 1) * width
+        local x2 = a + (i * 2 + 2) * width
+        sum = sum + (f(x0) + 4 * f(x1) + f(x2)) * width / 3
+    end
+    return sum
+    
+end
+
+--- Approximate the derivative (central difference) of a single-variable function.
+--
+-- Computes (f(x + h) - f(x - h)) / (2 * h). Use smaller `h` to approach the analytical
+-- derivative but beware of numerical round-off for extremely small `h`.
+-- @tparam function f Function to differentiate (callable: number -> number)
+-- @tparam number x Point at which to evaluate the derivative
+-- @tparam number[opt] h Step size (defaults to 1e-10)
+-- @treturn number Numerical derivative approximation
+-- @usage local d = F.ARC(math.sin, 1.0, 1e-6)
+function F.ARC(f, x, h)
+    expect(1, f, "function")
+    expect(2, x, "number")
+    expect(3, h, "number", "nil")
+
+    h = h or 1e-10
+    return (f(x + h) - f(x - h)) / (2 * h)
+end
+
+--- Find a root using Newton–Raphson starting from `x0`.
+---
+--- Attempts up to 500 iterations. The derivative is approximated using `F.ARC`.
+--- On success returns the root (a number), otherwise returns `nil` to indicate failure.
+--- @tparam function f Function for which to find a root (callable: number -> number)
+--- @tparam number x0 Initial guess
+--- @tparam number tol Convergence tolerance for changes in x
+--- @treturn number|nil Root approximation or nil on failure
+--- @usage local r = F.solveRoot(math.sin, 3.0, 1e-12)
+function F.solveRoot(f, x0, tol)
+    expect(1, f, "function")
+    expect(2, x0, "number")
+    expect(3, tol, "number")
+
+    local x = x0
+    for i = 1, 500 do
+        local dfx = F.ARC(f, x)
+        if math.abs(dfx) < 1e-12 then
+            return nil
+        end
+        local x_new = x - f(x) / dfx
+        if math.abs(x_new - x) < tol then
+            return x_new
+        end
+        x = x_new
+    end
+    return nil
+end
+
+
+--- Basic Descriptive Statistics
+--
+-- @section basic_descriptive_statistics
+
+--- Computes the sum of numeric values in the dataset
+--
+-- @tparam number[] data sequential table of numbers
+-- @treturn number sum of values (0 if empty)
+function F.sum(data)
+    expect(1, data, "table")
+    local s = 0
+    for _, v in pairs(data) do
+        if type(v) ~= "number" then expect(1, data, "sequential table of numbers") end
+        s = s + v
+    end
+    return s
+end
+
+--- Computes the arithmetic mean (average) of the dataset
+--
+-- @tparam number[] data
+-- @treturn number|nil mean or nil if data empty
+function F.mean(data)
+    local n = #data
+    return n > 0 and F.sum(data) / n or nil
+end
+
+--- Computes the minimum value of the dataset
+--
+-- @tparam number[] data
+-- @treturn number|nil minimum value or nil if data empty
+function F.min(data)
+    expect(1, data, "table")
+    table.sort(data)
+    return data[1]
+end
+
+--- Computes the maximum value of the dataset
+--
+-- @tparam number[] data
+-- @treturn number|nil maximum value or nil if data empty
+function F.max(data)
+    expect(1, data, "table")
+    table.sort(data)
+    return data[#data]
+end
+
+--- Computes population variance by default.
+--
+-- Set `isSample` to true for sample variance.
+-- @tparam number[] data
+-- @tparam[opt=false] boolean isSample true to compute sample variance (divide by n-1)
+-- @treturn number|nil variance or nil if not defined
+function F.variance(data, isSample)
+    expect(1, data, "table")
+    if is_sample ~= nil then expect(2, isSample, "boolean") end
+    if #data == 0 then return nil end
+    local sumSq = 0
+    for _, v in pairs(data) do
+        sumSq = sumSq + (v - F.mean(data)) ^ 2
+    end
+    local denom = (isSample and #data - 1 or #data)
+    if denom <= 0 then return nil end
+    return sumSq / denom
+end
+
+--- Computes the standard deviation of the dataset using sample variance
+--
+-- @tparam number[] data
+-- @tparam[opt=false] boolean isSample true to compute sample stdev
+-- @treturn number|nil standard deviation or nil if not defined
+function F.stdev(data, isSample)
+    local v = F.variance(data, isSample)
+    return v and math.sqrt(v) or nil
+end
+
+--- Number of elements in the dataset
+--  If you don't know how this works i hate you
+--
+-- @tparam table data
+-- @treturn number size (n)
+function F.size(data)
+    expect(1, data, "table")
+    return #data
+end
+
+--- Computes the range of the dataset(max-min). Keep in mind that this is susceptible to skewing by outliers.
+--
+-- @tparam number[] data
+-- @treturn number|nil range or nil if undefined
+function F.range(data)
+    return F.min(data) and F.max(data) and F.max(data) - F.min(data) or nil
+end
+
+--- Computes the median (50th percentile) by sorting then popping one off of each side
+--
+-- If even length, returns average of the two middle values
+-- @tparam number[] data
+-- @treturn number|nil median or nil if empty
+function F.median(data)
+    expect(1, data, "table")
+    table.sort(data)
+    repeat
+        table.remove(data,1)
+        table.remove(data)
+    until #data<=2
+    return F.sum(data)/#data
+end
+
+--- Computes the mode and returns a sorted array of the most frequent value(s)
+--
+-- @tparam table data
+-- @treturn table list of mode values (empty table if data empty)
+function F.mode(data)
+    expect(1, data, "table")
+    local counts = {}
+    local maxc = 0
+
+    for _, v in pairs(data) do
+        counts[v] = (counts[v] or 0) + 1
+        if counts[v] > maxc then
+            maxc = counts[v]
+        end
+    end
+    if maxc == 0 then
+        return {}
+    end
+
+    local modes = {}
+    for v, c in pairs(counts) do
+        if c == maxc then
+            table.insert(modes, v)
+        end
+    end
+    table.sort(modes)
+    return modes
+end
+
+--- Computes the standard error of the mean (commonly called SE) indicating precision
+--
+-- @tparam number[] data
+-- @treturn number|nil standard error or nil if undefined
+function F.sex(data)
+    return #data > 0 and F.stdev(data, true) / math.sqrt(#data) or nil
+end
+--- Computes the asymmetry (skewness) of data around its mean
+--
+-- Requires at least 3 observations
+-- @tparam number[] data
+-- @treturn number|nil skewness or nil if undefined
+function F.skewness(data)
+    expect(1, data, "table")
+    local n = #data
+    if n < 3 then return nil end
+    local mu, sd = F.mean(data), F.stdev(data, true)
+    if not sd or sd == 0 then return nil end
+    local m3 = 0
+    for _, v in pairs(data) do
+        m3 = m3 + ((v - mu) / sd) ^ 3
+    end
+    return n / ((n - 1) * (n - 2)) * m3
+end
+
+--- Computes the messure of skew (kurtosis) using an excess kurtosis formula variant
+--
+-- Requires at least 4 observations and indicates how much peak or tail a distribution would have
+-- @tparam number[] data
+-- @treturn number|nil kurtosis or nil if undefined
+function F.kurtosis(data)
+    expect(1, data, "table")
+    local n = #data
+    if n < 4 then return nil end
+    local mu, sd = F.mean(data), F.stdev(data, true)
+    if not sd or sd == 0 then return nil end
+    local m4 = 0
+    for _, v in pairs(data) do
+        m4 = m4 + ((v - mu) / sd) ^ 4
+    end
+    return (n * (n + 1) / ((n - 1) * (n - 2) * (n - 3))) * m4
+        - (3 * (n - 1) ^ 2) / ((n - 2) * (n - 3))
+end
+
+--- Alternative Means
+--
+-- @section alternative_means
+
+--- Computes the geometric mean
+--
+-- Only defined for strictly positive values
+--
+-- Useful for multiplicative rates such as combining percentage growth rates
+-- @tparam number[] data
+-- @treturn number|nil geometric mean or nil if any value <= 0 or data empty
+function F.geometricMean(data)
+    expect(1, data, "table")
+    local prod, n = 1, #data
+    if n == 0 then return nil end
+    for _, v in pairs(data) do
+        if type(v) ~= "number" or math.abs(v) ~= v then expect(1, data, "sequential table of positive numbers") end
+        if v <= 0 then return nil end
+        prod = prod * v
+    end
+    return prod ^ (1 / n)
+end
+
+--- Computes the harmonic mean
+--
+-- Best used for average rates and ratios, or inverse proportionalities
+-- @tparam number[] data
+-- @treturn number|nil harmonic mean or nil if any value == 0 or data empty
+function F.harmonicMean(data)
+    expect(1, data, "table")
+    local sumr, n = 0, #data
+    if n == 0 then return nil end
+    for _, v in pairs(data) do
+        if type(v) ~= "number" or v == 0 or math.abs(v) ~= v then expect(1, data, "sequential table of positive non-zero numbers") end
+        if v == 0 then return nil end
+        sumr = sumr + 1 / v
+    end
+    return n / sumr
+end
+
+--- Computes the trimmed mean
+--
+-- Removes `trim` fraction from each tail and averages the rest
+--
+-- Much more reliable measure of central tendency, clamps down outliers by removing a percentage of extremes
+-- @tparam number[] data
+-- @tparam[opt=0.05] number trim fraction to trim from each tail
+-- @treturn number|nil trimmed mean or nil if undefined
+function F.trimmedMean(data, trim)
+    if trim ~= nil then
+        expect(2, trim, "number")
+        if math.abs(trim) ~= trim then
+            expect(2, trim, "non-negative number")
+        end
+    end
+    trim = trim or 0.05
+    local t = { table.unpack(data) }
+    table.sort(t)
+    local n = #t
+    if n == 0 then return nil end
+    local tn = math.floor(trim * n)
+    local s = 0
+    for i = tn + 1, n - tn do
+        if type(t[i]) ~= "number" then expect(1, data, "sequential table of numbers") end
+        s = s + t[i]
+    end
+    local denom = n - 2 * tn
+    if denom <= 0 then return nil end
+    return s / denom
+end
+
+--- Computes the winsorized mean
+--
+-- Clamps extreme values to given quantiles before averaging
+--
+-- Much more reliable measure of central tendency
+-- @tparam number[] data
+-- @tparam[opt=0.05] number alpha fraction to winsorize in each tail
+-- @treturn number|nil winsorized mean or nil if empty
+function F.winsorMean(data, alpha)
+    if alpha ~= nil then
+        expect(2, alpha, "number")
+        if math.abs(alpha) ~= alpha then
+            expect(2, alpha, "non-negative number")
+        end
+        if alpha > 0.5 then execpt(2, alpha, "number less than or equal to 0.5")
+    end
+    alpha = alpha or 0.05
+    local t = { table.unpack(data) }
+    table.sort(t)
+    local n = #t
+    if n == 0 then return nil end
+    if alpha == 0 then return F.mean(t) end
+
+    local lower = math.floor(alpha * n) + 1
+    local upper = math.ceil((1 - alpha) * n)
+    local winsorT = { table.unpack(t) }
+
+    local lowerBound = t[lower]
+    local upperBound = t[upper]
+    for i = 1, lower - 1 do winsorT[i] = lowerBound end
+    for i = upper + 1, n do winsorT[i] = upperBound end
+
+    return F.mean(winsorT)
+end
+
+--- Computes the weighted mean
+--
+-- @tparam number[] data
+-- @tparam number[] weights same length as data
+-- @treturn number|nil weighted mean or nil if lengths mismatch or zero total weight
+function F.weightedMean(data, weights)
+    expect(1, data, "table")
+    expect(2, weights, "table")
+    local n = #data
+    if n == 0 or #weights ~= n then return nil end
+    local num, den = 0, 0
+    for i = 1, n do
+        if type(data[i]) ~= "number" then expect(1, data, "sequential table of numbers") end
+        if type(weights[i]) ~= "number" then expect(2, weights, "sequential table of numbers") end
+        num = num + data[i] * weights[i]
+        den = den + weights[i]
+    end
+    return den > 0 and num / den or nil
+end
+
+--- Robust Statistics
+--
+-- @section robust_statistics
+
+--- Computes the median absolute deviation (MAD)
+--
+-- Much more reliable measure of variability when outliers are present, from the deviation
+-- @tparam number[] data
+-- @treturn number|nil MAD or nil if empty
+function F.madMedian(data)
+    if #data == 0 then return nil end
+    local med = F.median(data)
+    local devs = {}
+    for _, v in pairs(data) do
+        if type(v) ~= "number" then expect(1, data, "sequential table of numbers") end
+        table.insert(devs, math.abs(v - med))
+    end
+    return F.median(devs)
+end
+
+--- Inequality Measures
+--
+-- @section inequality_measures
+
+--- Computes the gini coefficient for inequality (0..1)
+--
+-- Returns 0 for datasets with fewer than 2 or zero mean
+--
+-- Represents how unequally distributed a dataset it, best explained by income but works for other sets too
+-- @tparam number[] data
+-- @treturn number gini coefficient (0..1)
+function F.gini(data)
+    expect(1, data, "table")
+    local n = #data
+    if n < 2 then return 0 end
+    local t = { table.unpack(data) }
+    table.sort(t)
+    local mean = F.mean(t)
+    if not mean or mean == 0 then return 0 end
+
+    local cumsum = 0
+    for i = 1, n do
+        if type(t[i]) ~= "number" then expect(1, data, "sequential table of numbers") end
+        cumsum = cumsum + t[i]
+    end
+
+    local num = 0
+    for i = 1, n do
+        num = num + (2 * i - n - 1) * t[i]
+    end
+    return num / (n * cumsum)
+end
+
+--- Bivariate Statistics
+--
+-- @section bivariate_statistics
+
+--- Computes the sample covariance (uses n-1 denominator)
+--
+-- Represents how much the two datasets will vary with each other
+-- @tparam number[] x
+-- @tparam number[] y
+-- @treturn number|nil covariance or nil if lengths mismatch or n<=1
+function F.covariance(x, y)
+    expect(1, x, "table")
+    expect(2, y, "table")
+    local n = #x
+    if n == 0 or #y ~= n then return nil end
+    local mx, my = F.mean(x), F.mean(y)
+    local cov = 0
+    for i = 1, n do
+        if type(x[i]) ~= "number" then expect(1, x, "sequential table of numbers") end
+        if type(y[i]) ~= "number" then expect(2, y, "sequential table of numbers") end
+        cov = cov + (x[i] - mx) * (y[i] - my)
+    end
+    if n <= 1 then return nil end
+    return cov / (n - 1)
+end
+
+--- Computes the pearson correlation coefficient
+--
+-- Returns 0 if undefined
+--
+-- Represents the strength and relationship of the covariances, much more interpretable
+-- @tparam number[] x
+-- @tparam number[] y
+-- @treturn number correlation coefficient in [-1,1] or 0 if undefined
+function F.correlation(x, y)
+    local cov = F.covariance(x, y)
+    local sx, sy = F.stdev(x, true), F.stdev(y, true)
+    if not cov or not sx or not sy or sx == 0 or sy == 0 then
+        return 0
+    end
+    return cov / (sx * sy)
+end
+
+--- Quantiles and Outliers
+--
+-- @section quantiles_and_qutliers
+
+--- Computes the percentile interpolation (linear interpolation between order statistics)
+--
+-- Finds the percentile of a value p given a dataset, sorts and places in between indices(or on one)
+--
+-- p in [0,1]
+-- @tparam number[] data
+-- @tparam number p percentile proportion (0..1)
+-- @treturn number|nil percentile value or nil if data empty
+function F.percentile(data, p)
+    expect(2, p, "number")
+    if p < 0 then expect(2, p, "number greater than or equal to zero") end
+    if p > 1 then expect(2, p, "number less than or equal to one") end
+    if p == 0 then return F.min(data) end
+    if p == 1 then return F.max(data) end
+    local t = { table.unpack(data) }
+    table.sort(t)
+    local n = #t
+    if n == 0 then return nil end
+    local rank = p * (n - 1) + 1
+    local f, c = math.floor(rank), math.ceil(rank)
+    if type(t[f]) ~= "number" then expect(1, data, "sequential table of numbers") end
+    if f == c then
+        return t[f]
+    else
+        if type(t[c]) ~= "number" then expect(1, data, "sequential table of numbers") end
+        return t[f] + (rank - f) * (t[c] - t[f])
+    end
+end
+
+--- Computes the first and third quartiles as table (`{ Q1 = ..., Q3 = ... }`)
+--
+-- Quartiles are found by cutting the dataset in half using the median, and finding the median of those sets
+-- @tparam number[] data
+-- @treturn table quartiles
+function F.quartiles(data)
+    return {
+        Q1 = F.percentile(data, 0.25),
+        Q3 = F.percentile(data, 0.75)
+    }
+end
+
+--- Computes the interquartile range Q3 - Q1
+--
+-- The distance between first and third quartiles
+-- @tparam number[] data
+-- @treturn number|nil IQR or nil if undefined
+function F.iqr(data)
+    local q = F.quartiles(data)
+    if not q.Q1 or not q.Q3 then return nil end
+    return q.Q3 - q.Q1
+end
+
+--- Computes a list of all outliers in the dataset
+--
+-- Outliers are considered as such if they are more than 150% of the IQR away from either the first or third quartiles
+-- @tparam number[] data
+-- @treturn number[] list of outlier values (empty if none)
+function F.outliers(data)
+    local q = F.quartiles(data)
+    local iqr = F.iqr(data)
+    if not iqr then return {} end
+    local low, high = q.Q1 - 1.5 * iqr, q.Q3 + 1.5 * iqr
+    local outs = {}
+    for _, v in pairs(data) do
+        if v < low or v > high then
+            table.insert(outs, v)
+        end
+    end
+    return outs
+end
+
+--- Utility Functions
+--
+-- @section utility_functions
+
+--- Find index of value in an array-like table (linear search)
+--
+-- @tparam table tbl
+-- @param value
+-- @treturn number|nil index or nil if not found
+function F.find(tbl, value)
+    expect(1, tbl, "table")
+    for i=1, #tbl do
+        if tbl[i] == value then
+            return i
+        end
+    end
+    return nil
+end
+
+--- Generates n quantitiative data points between a and b
+--
+-- @tparam number n number of points
+-- @tparam[opt=0] number a lower bound
+-- @tparam[opt=1] number b upper bound
+-- @treturn number[] array of random values
+function F.testdata(n, a, b)
+    expect(1, n, "number")
+    expect(2, a, "number")
+    expect(3, b, "number")
+    if n < 1 then expect(1, n, "number greater than or equal to one")
+    local result = {}
+    a = a or 0
+    b = b or 1
+    for i = 1, n do
+        result[i] = a + math.random() * (b - a)
+    end
+    return result
+end
+
+--- Linear Regression
+--
+-- @section linear_regression
+
+--- Computes a simple least-squares linear regression (y ~ a + b x)
+--
+-- Minimizes squares to find the line that is the least distance squared from all data points
+-- @tparam number[] x independent variable values
+-- @tparam number[] y dependent variable values
+-- @treturn table|nil `{ slope = number, intercept = number }` or nil if undefined
+function F.linReg(x, y)
+    expect(1, x, "table")
+    expect(2, y, "table")
+    local n = #x
+    if n == 0 or #y ~= n then return nil end
+
+    local mx, my = F.mean(x), F.mean(y)
+    local num, den = 0, 0
+    for i = 1, n do
+        if type(x[i]) ~= "number" then expect(1, x, "sequential table of numbers") end
+        if type(y[i]) ~= "number" then expect(2, y, "sequential table of numbers") end
+        local dx = x[i] - mx
+        num = num + dx * (y[i] - my)
+        den = den + dx * dx
+    end
+    if den == 0 then return nil end
+
+    local slope = num / den
+    local intercept = my - slope * mx
+    return { slope = slope, intercept = intercept }
+end
+
+--- Predicts the y value for a given linear regression model at a given position
+--
+-- @tparam table model `{ slope, intercept }`
+-- @tparam number xval value of x
+-- @treturn number|nil predicted y or nil if model missing
+function F.linRegPred(model, xval)
+    expect(1, model, "table")
+    expect(2, xval, "number")
+    expect(1, model.slope, "linear regression model")
+    expect(1, model.intercept, "linear regression model")
+    if not model then return nil end
+    return model.slope * xval + model.intercept
+end
+
+--- Computes the coefficient of determination R^2 for linear model
+--
+-- Represents how much variation in variable y can be attributed to variable x
+-- @tparam number[] x
+-- @tparam number[] y
+-- @tparam table model linear model returned by linReg
+-- @treturn number|nil R^2 (1 if total variance is zero)
+function F.r2(x, y, model)
+    expect(1, x, "table")
+    expect(2, y, "table")
+    expect(3, model, "table")
+    expect(3, model.slope, "linear regression model")
+    expect(3, model.intercept, "linear regression model")
+    local n = #y
+    if n == 0 or not model then return nil end
+
+    local ymean = F.mean(y)
+    local ssres, sstot = 0, 0
+    for i = 1, n do
+        if type(x[i]) ~= "number" then expect(1, x, "sequential table of numbers") end
+        if type(y[i]) ~= "number" then expect(2, y, "sequential table of numbers") end
+        local ypred = F.linRegPred(model, x[i])
+        ssres = ssres + (y[i] - ypred) ^ 2
+        sstot = sstot + (y[i] - ymean) ^ 2
+    end
+    if sstot == 0 then
+        return 1
+    else
+        return 1 - ssres / sstot
+    end
+end
+
+--- Hyposthesis Testing - Student's t Distribution
+--
+-- @section hyposthesis_testing_students_t_distribution
+
+--- Calculate cumulative distribution function for Student's t distribution
+--
+-- Uses numerical approximation for the incomplete beta function using relationship to incomplete beta function and continued fraction approximation
+-- @tparam number t t-statistic value
+-- @tparam number df degrees of freedom
+-- @treturn number probability `P(T <= t)`
+function F.tCDF(t, df)
+    expect(1, t, "number")
+    expect(2, dt, "number")
+    if df < 0.5 then expect(2, dt, "number greater than or equal to 0.5") end
+    
+    if df > 1000 then
+        local x = t / math.sqrt(df / (df - 2))
+        return F.normalCDF(x)
+    end
+    
+    local x = df / (df + t * t)
+    local a = df / 2
+    local b = 0.5
+    
+    local betaInc = F.incopmleteBeta(x, a, b)
+    
+    if t >= 0 then
+        return 1 - 0.5 * betaInc
+    else
+        return 0.5 * betaInc
+    end
+end
+
+--- Calculate normal (Gaussian) cumulative distribution function
+--
+-- Helper function for tCDF when df is large using error function approximation
+-- @tparam number x value
+-- @treturn number probability `P(X <= x)` for standard normal
+function F.normalCDF(x)
+    expect(1, x, "number")
+    local function erf(x)
+        local a1 =  0.254829592
+        local a2 = -0.284496736
+        local a3 =  1.421413741
+        local a4 = -1.453152027
+        local a5 =  1.061405429
+        local p  =  0.3275911
+        
+        local sign = x < 0 and -1 or 1
+        x = math.abs(x)
+        
+        local t = 1.0 / (1.0 + p * x)
+        local y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * math.exp(-x * x)
+        
+        return sign * y
+    end
+    
+    return 0.5 * (1 + erf(x / math.sqrt(2)))
+end
+
+--- Calculate incomplete beta function I_x(a,b)
+--
+-- Helper function for tCDF calculation using continued fraction approximation
+-- @tparam number x upper limit of integration (0 <= x <= 1)
+-- @tparam number a first shape parameter
+-- @tparam number b second shape parameter
+-- @treturn number incomplete beta function value
+function F.incopmleteBeta(x, a, b)
+    expect(1, x, "number")
+    expect(2, a, "number")
+    expect(3, b, "number")
+    if x < 0 or x > 1 then expect(1, x, "number between zero and one inclusive") end
+    
+    local function betaCF(x, a, b)
+        local maxIter = 200
+        local epsilon = 1e-10
+        
+        local qab = a + b
+        local qap = a + 1
+        local qam = a - 1
+        local c = 1
+        local d = 1 - qab * x / qap
+        
+        if math.abs(d) < 1e-30 then d = 1e-30 end
+        d = 1 / d
+        local h = d
+        
+        for m = 1, maxIter do
+            local m2 = 2 * m
+            local aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+            d = 1 + aa * d
+            if math.abs(d) < 1e-30 then d = 1e-30 end
+            c = 1 + aa / c
+            if math.abs(c) < 1e-30 then c = 1e-30 end
+            d = 1 / d
+            h = h * d * c
+            
+            aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+            d = 1 + aa * d
+            if math.abs(d) < 1e-30 then d = 1e-30 end
+            c = 1 + aa / c
+            if math.abs(c) < 1e-30 then c = 1e-30 end
+            d = 1 / d
+            local del = d * c
+            h = h * del
+            
+            if math.abs(del - 1) < epsilon then
+                return h
+            end
+        end
+        
+        return h
+    end
+    
+    local function logBeta(a, b)
+        return F.logGamma(a) + F.logGamma(b) - F.logGamma(a + b)
+    end
+    
+    local bt = math.exp(a * math.log(x) + b * math.log(1 - x) - logBeta(a, b))
+    
+    if x < (a + 1) / (a + b + 2) then
+        return bt * betaCF(x, a, b) / a
+    else
+        return 1 - bt * betaCF(1 - x, b, a) / b
+    end
+end
+
+--- Calculate logarithm of gamma function
+--
+-- Helper function for incopmleteBeta using Lanczos approximation coefficients
+-- @tparam number x input value
+-- @treturn number `log(Gamma(x))`
+function F.logGamma(x)
+    expect(1, x, "number")
+    local coef = {
+        76.18009172947146,
+        -86.50532032941677,
+        24.01409824083091,
+        -1.231739572450155,
+        0.1208650973866179e-2,
+        -0.5395239384953e-5
+    }
+    
+    local y = x
+    local tmp = x + 5.5
+    tmp = tmp - (x + 0.5) * math.log(tmp)
+    local ser = 1.000000000190015
+    
+    for i = 1, 6 do
+        y = y + 1
+        ser = ser + coef[i] / y
+    end
+    
+    return -tmp + math.log(2.5066282746310005 * ser / x)
+end
+
+--- Hypothesis Testing - t-tests
+--
+-- @section hypothesis_testing_t_tests
+
+--- Perform one-sample t-test
+--
+-- Tests whether sample mean significantly differs from a hypothesized population mean
+--
+-- Returns p-value: if p < 0.05, difference is statistically significant
+-- @tparam number[] data sample values
+-- @tparam number mu0 hypothesized population mean
+-- @treturn table results table with t (test statistic), df (degrees of freedom), and p (p-value)
+function F.oneSampleTTest(data, mu0)
+    expect(1, data, "table")
+    expect(2, mu0, "number")
+    local n = #data
+    if n < 2 then return {t = 0, df = 0, p = 1} end
+    local m = F.mean(data)
+    local se = F.sex(data)
+    if not se or se == 0 then return {t = 0, df = 0, p = 1} end
+    local t = (m - mu0) / se
+    local df = n - 1
+    local p = 2 * (1 - F.tCDF(math.abs(t), df))
+    return {t = t, df = df, p = p}
+end
+
+--- Perform two-sample t-test
+--
+-- Tests whether means of two independent samples significantly differ
+--
+-- Returns p-value: if p < 0.05, difference is statistically significant
+-- @tparam number[] x first sample
+-- @tparam number[] y second sample
+-- @tparam boolean[opt=true] equalVar assume equal variances (default true)
+-- @treturn table results table with t (test statistic), df (degrees of freedom), and p (p-value)
+function F.twoSampleTTest(x, y, equalVar)
+    expect(1, x, "table")
+    expect(2, y, "table")
+    if equalVar ~= nil then expect(3, equalVar, "boolean") end
+    local nx, ny = #x, #y
+    if nx < 2 or ny < 2 then return {t = 0, df = 0, p = 1} end
+    local mx, my = F.mean(x), F.mean(y)
+    local vx, vy = F.variance(x, true), F.variance(y, true)
+    equalVar = equalVar ~= false
+    
+    local se, df
+    if equal_var then
+        local pv = ((nx - 1) * vx + (ny - 1) * vy) / (nx + ny - 2)
+        se = math.sqrt(pv * (1 / nx + 1 / ny))
+        df = nx + ny - 2
+    else
+        se = math.sqrt(vx / nx + vy / ny)
+        local num = (vx / nx + vy / ny)^2
+        local den = (vx^2 / (nx^2 * (nx - 1))) + (vy^2 / (ny^2 * (ny - 1)))
+        df = num / den
+    end
+    
+    if se == 0 then return {t = 0, df = 0, p = 1} end
+    local t = (mx - my) / se
+    local p = 2 * (1 - F.tCDF(math.abs(t), df))
+    return {t = t, df = df, p = p}
+end
+
+--- Perform paired t-test
+--
+-- Tests whether the mean difference between paired observations is significant
+--
+-- Useful for before/after comparisons on the same subjects
+-- @tparam number[] before values before treatment
+-- @tparam number[] after values after treatment
+-- @treturn table results table with t (test statistic), df (degrees of freedom), and p (p-value)
+function F.pairTTest(before, after)
+    expect(1, before, "table")
+    expect(2, after, "table")
+    local n = #before
+    if n < 2 or #after ~= n then return {t = 0, df = 0, p = 1} end
+    local diffs = {}
+    for i = 1, n do
+        if type(before[i]) ~= "number" then expect(1, before, "sequential table of numbers") end
+        if type(after[i]) ~= "number" then expect(2, after, "sequential table of numbers") end
+        diffs[i] = before[i] - after[i]
+    end
+    return F.oneSampleTTest(diffs, 0)
+end
+
+--- Perform t-test on linear regression slope
+--
+-- Checks a dataset against it's linear regression
+-- @tparam number[] x independent variable values
+-- @tparam number[] y dependent variable values
+-- @treturn table results table with t (test statistic), df (degrees of freedom), p (p-value), slope, slopeSe, r2 (r-squared)
+function F.linRegTTest(x, y)
+    expect(1, x, "table")
+    expect(2, y, "table")
+    local model = F.linReg(x, y)
+    if not model then return {t = 0, df = 0, p = 1} end
+    
+    local n = #x
+    local slopeSe = F.stdev(y, true) / math.sqrt(F.sum(function()
+        local mx = F.mean(x)
+        local sxx = 0
+        for i = 1, n do
+        if type(x[i]) ~= "number" then expect(1, x, "sequential table of numbers") end
+            sxx = sxx + (x[i] - mx)^2
+        end
+        return sxx
+    end))
+    
+    local t = model.slope / slopeSe
+    local df = n - 2
+    local p = 2 * (1 - F.tCDF(math.abs(t), df))
+    
+    return {
+        t = t,
+        df = df,
+        p = p,
+        slope = model.slope,
+        slopeSe = slopeSe,
+        r2 = F.r2(x, y, model)
+    }
+end
+
+return F

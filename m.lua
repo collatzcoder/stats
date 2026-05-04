@@ -790,8 +790,8 @@ end
 
 
 
---returns the probability that a value x will be attained given a mean of mu and a standard deviation of sigma
-function F.normPDF(x,mu,sigma) return function(x) return math.exp(-0.5*((x-mu)/sigma)^2)/(sigma*math.sqrt(2*math.pi)) end end
+--returns the function for the normal curve
+function F.normPDF(mu,sigma) return function(x) return math.exp(-0.5*((x-mu)/sigma)^2)/(sigma*math.sqrt(2*math.pi)) end end
 
 --using normPDF, integrates from lower to upper with 10k subdivisions
 function F.normalCDF(lower, upper, mean, stdev)

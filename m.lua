@@ -798,5 +798,11 @@ function F.normCDF(lower, upper, mean, stdev)
     return F.riemannC(F.normPDF(x,mean,stdev),10000,lower,upper)
 end
 
+--for now, normal gamma function, only takes positive integers
+function F.gammaN(x) return math.factorial(x-1) end
+
+function F.tPDF(mu,sigma,df)
+
+
 
 return F

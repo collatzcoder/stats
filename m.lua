@@ -784,17 +784,13 @@ function F.r2(x, y, model)
     end
 end
 
---- Hyposthesis Testing - Student's t Distribution
---
--- @section curves
-
 
 
 --returns the function for the normal curve
 function F.normPDF(mu,sigma) return function(x) return math.exp(-0.5*((x-mu)/sigma)^2)/(sigma*math.sqrt(2*math.pi)) end end
 
 --using normPDF, integrates from lower to upper with 10k subdivisions
-function F.normalCDF(lower, upper, mean, stdev)
+function F.normCDF(lower, upper, mean, stdev)
     expect(1, lower, "number")
     expect(2,upper,"number")
     expect(3,mean,"number")

@@ -23,7 +23,7 @@ function F.riemannC(f, n, a, b, init)
     end
     return sum
 end
-
+--given a mean and standard deviation, returns a function that calculates the normal distribution's PDF at any x
 function F.normPDF(mu,sigma) return function(x) return math.exp(-0.5*((x-mu)/sigma)^2)/(sigma*math.sqrt(2*math.pi)) end end
 
 --using normPDF, integrates from lower to upper with 10k subdivisions
@@ -35,5 +35,3 @@ function F.normalCDF(lower, upper, mean, stdev)
     return F.riemannC(F.normPDF(x,mean,stdev),10000,lower,upper)
 end
 return F
-
-print(F.normalCDF(-1, 1, 0, 1))

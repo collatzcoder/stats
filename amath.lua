@@ -8,7 +8,33 @@ local expect = expect.expect
 local F = {}
 
 
+--{TABLE OPS}
 
+--linear search for whatever value you want
+function F.find(tbl, value)
+    expect(1, tbl, "table")
+    for i=1, #tbl do
+        if tbl[i] == value then
+            return i
+        end
+    end
+    return nil
+end
+
+--make n numbers between a and b
+function F.testdata(n, a, b)
+    expect(1, n, "number")
+    expect(2, a, "number")
+    expect(3, b, "number")
+    if n < 1 then expect(1, n, "number greater than or equal to one")
+    local result = {}
+    a = a or 0
+    b = b or 1
+    for i = 1, n do
+        result[i] = a + math.random() * (b - a)
+    end
+    return result
+end
 --add each value in values to the resultant table n times
 function F.weightedTable(values, weights)
     expect(1, values, "table")
@@ -94,6 +120,7 @@ function F.riemannS(f, n, a, b, init)
 end
 
 --use simpsons rule to integrate with n subdivisions from a to b
+--MAY NOT WORK I THINK ITS BROKEN
 function F.riemannC(f, n, a, b, init)
     expect(1, f, "function")
     expect(2, n, "number")
@@ -117,19 +144,10 @@ function F.riemannC(f, n, a, b, init)
         sum = sum + (f(x0) + 4 * f(x1) + f(x2)) * width / 3
     end
     return sum
-    
 end
---uses a very tiny riemannC to return a function that approximates the integral at x(this is a lie and impossible actually), not perfect
-function F.integral(f)
-    expect(1, f, "function")
-    return function(x)
-        return F.riemannC(f,1e10,x-0.5e-10,x+0.5e-10)
-    end
-end
+--note: you cannot have an integral at a point. I cannot program something to return the function that is the integral (yet)
 
---{SOLVERS}   
-
-
+--{SOLVERS}
 --uses newton raphson method to find the root, can fail if the derivative is zero or near zero, or if it fails to converge within 500 iterations
 function F.solveRoot(f, x0, tol)
     expect(1, f, "function")
@@ -686,43 +704,7 @@ function F.outliers(data)
 end
 
 --- Utility Functions
---
--- @section utility_functions
 
---- Find index of value in an array-like table (linear search)
---
--- @tparam table tbl
--- @param value
--- @treturn number|nil index or nil if not found
-function F.find(tbl, value)
-    expect(1, tbl, "table")
-    for i=1, #tbl do
-        if tbl[i] == value then
-            return i
-        end
-    end
-    return nil
-end
-
---- Generates n quantitiative data points between a and b
---
--- @tparam number n number of points
--- @tparam[opt=0] number a lower bound
--- @tparam[opt=1] number b upper bound
--- @treturn number[] array of random values
-function F.testdata(n, a, b)
-    expect(1, n, "number")
-    expect(2, a, "number")
-    expect(3, b, "number")
-    if n < 1 then expect(1, n, "number greater than or equal to one")
-    local result = {}
-    a = a or 0
-    b = b or 1
-    for i = 1, n do
-        result[i] = a + math.random() * (b - a)
-    end
-    return result
-end
 
 --- Linear Regression
 --
@@ -809,8 +791,7 @@ end
 
 
 --returns the probability that a value x will be attained given a mean of mu and a standard deviation of sigma
-function F.normPDF(x,mu,sigma) return (1/(stdev*math.sqrt(2*pi)))*(math.exp(1)^(-1/2((x-mu)/sigma)^2)) end
-function F.tPDF(x,)
+function F.normPDF(x,mu,sigma) return function(x) return math.exp(-0.5*((x-mu)/sigma)^2)/(sigma*math.sqrt(2*math.pi)) end end
 
 --using normPDF, integrates from lower to upper with 10k subdivisions
 function F.normalCDF(lower, upper, mean, stdev)
@@ -818,7 +799,7 @@ function F.normalCDF(lower, upper, mean, stdev)
     expect(2,upper,"number")
     expect(3,mean,"number")
     expect(4,stdev,"number")
-    return F.integrateC(F.normPDF(x,mean,stdev),10000,lower,upper)
+    return F.riemannC(F.normPDF(x,mean,stdev),10000,lower,upper)
 end
 
 
